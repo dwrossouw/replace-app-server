@@ -20,7 +20,7 @@ const locationSchema = new Schema(
             value[0] <= 180 &&
             value[0] >= -180 &&
             value[1] <= 90 &&
-            value[1] >= -90
+            value[1] >= -90 
           );
         },
         message: "Invalid coordinates.",
