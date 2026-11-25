@@ -1,5 +1,6 @@
 const Listing = require("../models/Listing.model");
 const User = require("../models/User.model");
+const mongoose = require("mongoose");
 
 // POST Create a new listing
 const createListing = async (req, res) => {
@@ -128,9 +129,22 @@ const getListings = async (req, res) => {
 
 // // GET Retrieve individual listing details
 // router.get("/:id", async (req, res) => {});
-const getListingDetails = async (req, res)=>{
+const getListingDetails = async (req, res) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) {
+    res.status(400).json({ message: "Invalid listing ID" });
+    return;
+  }
+  const listingDetails = await Listing.findById(id).populate(
+    "giver",
+    "displayName neighbourhood",
+  );
 
-}
+  if(!listingDetails){
+    res.status(404).json({message: "Listing not found."})
+  }
+  res.status(200).json(listingDetails);
+};
 
 // // PATCH Update listing information
 // router.patch("/:id", verifyToken, async (req, res) => {});
@@ -138,4 +152,4 @@ const getListingDetails = async (req, res)=>{
 // // DELETE Cancel a listing
 // router.delete("/:id", verifyToken, async (req, res) => {});
 
-module.exports = { createListing, getListings };
+module.exports = { createListing, getListings, getListingDetails };
