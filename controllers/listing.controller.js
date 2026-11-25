@@ -107,10 +107,30 @@ const createListing = async (req, res) => {
 };
 
 // GET Retrieve and filter available listings
-// router.get("/", async (req, res) => {});
+const getListings = async (req, res) => {
+  const { category } = req.query;
+  const filter = {
+    status: "available",
+    requestsOpen: true,
+    requestDeadline: { $gt: new Date() },
+  };
+  if (category) {
+    filter.category = category;
+  }
+
+  const listings = await Listing.find(filter).populate(
+    "giver",
+    "displayName neighbourhood",
+  );
+
+  res.status(200).json(listings);
+};
 
 // // GET Retrieve individual listing details
 // router.get("/:id", async (req, res) => {});
+const getListingDetails = async (req, res)=>{
+
+}
 
 // // PATCH Update listing information
 // router.patch("/:id", verifyToken, async (req, res) => {});
@@ -118,4 +138,4 @@ const createListing = async (req, res) => {
 // // DELETE Cancel a listing
 // router.delete("/:id", verifyToken, async (req, res) => {});
 
-module.exports = { createListing };
+module.exports = { createListing, getListings };
