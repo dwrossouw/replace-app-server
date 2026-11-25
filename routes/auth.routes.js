@@ -13,7 +13,7 @@ const User = require("../models/User.model");
 // Register a new user after validating the submitted account details.
 router.post("/signup", async (req, res) => {
   // Read the required signup values from the JSON request body.
-  const { fullName, displayName, email, password } = req.body;
+  const { fullName, displayName, email, password, neighbourhood } = req.body;
 
   // Reject incomplete submissions before performing any database operations.
   if (!fullName || !displayName || !email || !password) {
@@ -62,6 +62,7 @@ router.post("/signup", async (req, res) => {
     displayName: displayName,
     email: email,
     passwordHash: passwordHash,
+    neighbourhood: neighbourhood
   };
 
   // Persist the new account and return a success response only after creation succeeds.
@@ -93,7 +94,10 @@ router.post("/login", async (req, res) => {
   }
 
   // Compare the plain-text login password with the bcrypt hash stored for this user.
-  const isPasswordCorrect = await bcrypt.compare(password, foundUser.passwordHash);
+  const isPasswordCorrect = await bcrypt.compare(
+    password,
+    foundUser.passwordHash,
+  );
   if (!isPasswordCorrect) {
     res.status(400).json({ message: "Password not correct" });
     return;
@@ -114,10 +118,29 @@ router.post("/login", async (req, res) => {
 });
 
 // GET /api/auth/verify
-// Verify the Bearer token and return the payload stored by verifyToken middleware.
-router.get("/verify", verifyToken, (req, res)=>{
-    res.status(200).json(req.payload)
-})
+// Verify the Bearer token and retrieve the current user's information.
+// Return a safe user object without exposing private information.
+router.get("/verify", verifyToken, async (req, res) => {
+
+  //Find the updated information in the db
+  const foundUser = await User.findById(req.payload._id).select("+location");
+
+  if (!foundUser) {
+    res.status(401).json({ message: "User not found with that id." });
+    return;
+  }
+
+  const hasLocation = foundUser.location ? true : false;
+
+  const userData = {
+    _id: foundUser._id,
+    displayName: foundUser.displayName,
+    role: foundUser.role,
+    neighbourhood: foundUser.neighbourhood ?? null,
+    hasLocation: hasLocation
+  };
+
+  res.status(200).json(userData);
+});
 
 module.exports = router;
-
