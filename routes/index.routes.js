@@ -6,4 +6,7 @@ router.use("/auth", authRouter);
 const userRouter = require("./user.routes");
 router.use("/users", userRouter);
 
+const listingRouter = require("./listing.routes");
+router.use("/listings", listingRouter);
+
 module.exports = router;
