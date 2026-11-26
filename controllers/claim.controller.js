@@ -161,4 +161,82 @@ const withdrawClaim = async (req, res) => {
   });
 };
 
-module.exports = { createClaim, getListingClaims, withdrawClaim };
+// PATCH Reactivate a withdrawn claim
+const reactivateClaim = async (req, res) => {
+  const claimID = req.params.id;
+  const requesterID = req.payload._id;
+  const { collectionAcknowledged } = req.body ?? {};
+
+  // Validate the claim ID
+  if (!mongoose.isValidObjectId(claimID)) {
+    res.status(400).json({ message: "Invalid claim ID." });
+    return;
+  }
+
+  // Retrieve the claim
+  const claim = await Claim.findById(claimID);
+
+  if (!claim) {
+    res.status(404).json({ message: "Claim not found." });
+    return;
+  }
+
+  // Verify claim ownership
+  if (!claim.requester.equals(requesterID)) {
+    res.status(403).json({
+      message: "You cannot reactivate another user's claim.",
+    });
+    return;
+  }
+
+  // Only withdrawn claims can be reactivated
+  if (claim.status !== "withdrawn") {
+    res.status(409).json({
+      message: "Only withdrawn claims can be reactivated.",
+    });
+    return;
+  }
+
+  // Retrieve the associated listing
+  const listing = await Listing.findById(claim.listing);
+
+  if (!listing) {
+    res.status(404).json({ message: "Listing not found." });
+    return;
+  }
+
+  // Verify that the listing is still accepting requests
+  const now = new Date();
+
+  if (
+    listing.status !== "available" ||
+    listing.requestsOpen !== true ||
+    listing.requestDeadline <= now ||
+    listing.collectionDeadline <= now
+  ) {
+    res.status(409).json({
+      message: "This listing is no longer accepting requests.",
+    });
+    return;
+  }
+
+  // Validate collection acknowledgement
+  if (collectionAcknowledged !== true) {
+    res.status(400).json({
+      message: "You must acknowledge the collection requirements.",
+    });
+    return;
+  }
+
+  // Reactivate the existing claim
+  claim.status = "pending";
+  claim.confirmationDeadline = null;
+
+  await claim.save();
+
+  res.status(200).json({
+    message: "Claim reactivated successfully.",
+  });
+};
+
+module.exports = { createClaim, getListingClaims, withdrawClaim, reactivateClaim };
