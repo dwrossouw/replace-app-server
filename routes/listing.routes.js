@@ -1,8 +1,9 @@
 const router = require("express").Router();
 const { verifyToken } = require("../middlewares/auth.middlewares");
 const {createListing, getListings, getListingDetails, updateListing, deleteListing} = require("../controllers/listing.controller")
+const upload = require("../middlewares/upload.middlewares");
 
-router.post("/", verifyToken, createListing);
+router.post("/", verifyToken, upload.single("image"), createListing);
 router.get("/", getListings);
 router.get("/:id", getListingDetails);
 router.patch("/:id", verifyToken, updateListing);

@@ -2,23 +2,46 @@ const Listing = require("../models/Listing.model");
 const User = require("../models/User.model");
 const Claim = require("../models/Claim.model");
 const mongoose = require("mongoose");
+const { uploadImage } = require("../utils/cloudinary.utils");
 
 // POST Create a new listing
 const createListing = async (req, res) => {
   const userID = req.payload._id;
+
+  if (!req.file) {
+  res.status(400).json({ message: "A listing image is required." });
+  return;
+}
+
+let listingData;
+
+try {
+  listingData = JSON.parse(req.body.listing);
+} catch (error) {
+  res.status(400).json({ message: "Invalid listing data." });
+  return;
+}
+
+if (
+  !listingData ||
+  typeof listingData !== "object" ||
+  Array.isArray(listingData)
+) {
+  res.status(400).json({ message: "Invalid listing data." });
+  return;
+}
+
   const {
     title,
     description,
     category,
     quantity,
-    imageUrl,
-    imagePublicId,
     neighbourhood,
     collectionLocation,
     requestDeadline,
     collectionDeadline,
     collectionInstructions,
-  } = req.body;
+  } = listingData;
 
   const giver = await User.findById(userID).select("+location");
 
@@ -40,10 +63,6 @@ const createListing = async (req, res) => {
     typeof category !== "string" ||
     !category.trim() ||
     (quantity !== undefined && (!Number.isInteger(quantity) || quantity < 1)) ||
-    typeof imageUrl !== "string" ||
-    !imageUrl.trim() ||
-    typeof imagePublicId !== "string" ||
-    !imagePublicId.trim() ||
     typeof neighbourhood !== "string" ||
     !neighbourhood.trim() ||
     (collectionInstructions !== undefined &&
@@ -87,14 +106,16 @@ const createListing = async (req, res) => {
     return;
   }
 
+  const uploadResult = await uploadImage (req.file.buffer);
+
   const newListing = await Listing.create({
     giver: userID,
     title: title,
     description: description,
     category: category,
     quantity: quantity,
-    imageUrl: imageUrl,
-    imagePublicId: imagePublicId,
+    imageUrl: uploadResult.secure_url,
+    imagePublicId: uploadResult.public_id,
     neighbourhood: neighbourhood,
     collectionLocation: collectionLocation,
     collectionInstructions: collectionInstructions,
