@@ -239,4 +239,604 @@ const reactivateClaim = async (req, res) => {
   });
 };
 
-module.exports = { createClaim, getListingClaims, withdrawClaim, reactivateClaim };
+// PATCH Select a recipient
+const selectClaim = async (req, res) => {
+  const claimID = req.params.id;
+  const giverID = req.payload._id;
+
+  // Validate the claim ID
+  if (!mongoose.isValidObjectId(claimID)) {
+    res.status(400).json({ message: "Invalid claim ID." });
+    return;
+  }
+
+  // Retrieve the claim
+  const claim = await Claim.findById(claimID);
+
+  if (!claim) {
+    res.status(404).json({ message: "Claim not found." });
+    return;
+  }
+
+  // Retrieve the associated listing
+  const listing = await Listing.findById(claim.listing);
+
+  if (!listing) {
+    res.status(404).json({ message: "Listing not found." });
+    return;
+  }
+
+  // Verify listing ownership
+  if (!listing.giver.equals(giverID)) {
+    res.status(403).json({
+      message: "Only the listing owner can select a recipient.",
+    });
+    return;
+  }
+
+  const now = new Date();
+
+  // Validate eligibility for selection
+  if (
+    claim.status !== "pending" ||
+    listing.status !== "available" ||
+    listing.selectedClaim !== null ||
+    listing.collectionDeadline <= now
+  ) {
+    res.status(409).json({
+      message: "This claim cannot be selected.",
+    });
+    return;
+  }
+
+  // Calculate the confirmation deadline
+  const confirmationDeadline = new Date(
+    Math.min(
+      now.getTime() + 3 * 60 * 60 * 1000,
+      listing.collectionDeadline.getTime()
+    )
+  );
+
+  // Conditionally update the listing
+  const updatedListing = await Listing.findOneAndUpdate(
+    {
+      _id: listing._id,
+      giver: giverID,
+      status: "available",
+      selectedClaim: null,
+      collectionDeadline: { $gt: new Date() },
+    },
+    {
+      $set: {
+        requestsOpen: false,
+        selectedClaim: claim._id,
+      },
+    },
+    {
+      returnDocument: "before",
+      runValidators: true,
+    }
+  );
+
+  // Check whether the listing update succeeded
+  if (!updatedListing) {
+    res.status(409).json({
+      message: "This listing is no longer eligible for selection.",
+    });
+    return;
+  }
+
+  // Conditionally update the claim
+  const updatedClaim = await Claim.findOneAndUpdate(
+    {
+      _id: claim._id,
+      listing: listing._id,
+      status: "pending",
+    },
+    {
+      $set: {
+        status: "selected",
+        confirmationDeadline: confirmationDeadline,
+      },
+    },
+    {
+      returnDocument: "after",
+      runValidators: true,
+    }
+  );
+
+  // Reverse the listing update if the claim no longer matches
+  if (!updatedClaim) {
+    const rollback = await Listing.updateOne(
+      {
+        _id: listing._id,
+        status: "available",
+        selectedClaim: claim._id,
+        requestsOpen: false,
+      },
+      {
+        $set: {
+          selectedClaim: null,
+          requestsOpen:
+            updatedListing.requestsOpen &&
+            updatedListing.requestDeadline > new Date() &&
+            updatedListing.collectionDeadline > new Date(),
+        },
+      }
+    );
+
+    if (rollback.matchedCount === 0) {
+      res.status(500).json({
+        message: "Selection failed and requires reconciliation.",
+      });
+      return;
+    }
+
+    res.status(409).json({
+      message: "This claim is no longer available for selection.",
+    });
+    return;
+  }
+
+  // Return successful response
+  res.status(200).json({
+    message: "Recipient selected successfully.",
+    claimId: updatedClaim._id,
+    confirmationDeadline: updatedClaim.confirmationDeadline,
+  });
+};
+
+// PATCH Confirm a selected claim
+const confirmClaim = async (req, res) => {
+  const claimID = req.params.id;
+  const requesterID = req.payload._id;
+
+  // Validate the claim ID
+  if (!mongoose.isValidObjectId(claimID)) {
+    res.status(400).json({ message: "Invalid claim ID." });
+    return;
+  }
+
+  // Retrieve the claim
+  const claim = await Claim.findById(claimID);
+
+  if (!claim) {
+    res.status(404).json({ message: "Claim not found." });
+    return;
+  }
+
+  // Verify claim ownership
+  if (!claim.requester.equals(requesterID)) {
+    res.status(403).json({
+      message: "You cannot confirm another user's claim.",
+    });
+    return;
+  }
+
+  const now = new Date();
+
+  // Validate claim status and confirmation deadline
+  if (
+    claim.status !== "selected" ||
+    !claim.confirmationDeadline ||
+    claim.confirmationDeadline <= now
+  ) {
+    res.status(409).json({
+      message: "This claim is no longer eligible for confirmation.",
+    });
+    return;
+  }
+
+  // Retrieve the associated listing
+  const listing = await Listing.findById(claim.listing);
+
+  if (!listing) {
+    res.status(404).json({ message: "Listing not found." });
+    return;
+  }
+
+  // Validate listing eligibility
+  if (
+    listing.status !== "available" ||
+    !listing.selectedClaim ||
+    !listing.selectedClaim.equals(claim._id) ||
+    listing.requestsOpen !== false ||
+    listing.collectionDeadline <= now
+  ) {
+    res.status(409).json({
+      message: "This listing is no longer eligible for confirmation.",
+    });
+    return;
+  }
+
+  // Conditionally reserve the listing
+  const updatedListing = await Listing.findOneAndUpdate(
+    {
+      _id: listing._id,
+      status: "available",
+      selectedClaim: claim._id,
+      requestsOpen: false,
+      collectionDeadline: { $gt: new Date() },
+    },
+    {
+      $set: {
+        status: "reserved",
+      },
+    },
+    {
+      returnDocument: "after",
+      runValidators: true,
+    }
+  );
+
+  if (!updatedListing) {
+    res.status(409).json({
+      message: "This listing could not be reserved.",
+    });
+    return;
+  }
+
+  // Conditionally confirm the claim
+  const updatedClaim = await Claim.findOneAndUpdate(
+    {
+      _id: claim._id,
+      requester: requesterID,
+      listing: listing._id,
+      status: "selected",
+      confirmationDeadline: { $gt: new Date() },
+    },
+    {
+      $set: {
+        status: "confirmed",
+      },
+    },
+    {
+      returnDocument: "after",
+      runValidators: true,
+    }
+  );
+
+  // Reverse the listing update if confirmation fails
+  if (!updatedClaim) {
+    const rollback = await Listing.updateOne(
+      {
+        _id: listing._id,
+        status: "reserved",
+        selectedClaim: claim._id,
+        requestsOpen: false,
+      },
+      {
+        $set: {
+          status: "available",
+        },
+      }
+    );
+
+    if (rollback.matchedCount === 0) {
+      res.status(500).json({
+        message: "Confirmation failed and requires reconciliation.",
+      });
+      return;
+    }
+
+    res.status(409).json({
+      message: "This claim could not be confirmed.",
+    });
+    return;
+  }
+
+  // Return successful response
+  res.status(200).json({
+    message: "Claim confirmed successfully.",
+    claimId: updatedClaim._id,
+    listingId: updatedListing._id,
+  });
+};
+
+// PATCH Decline a selected claim
+const declineClaim = async (req, res) => {
+  const claimID = req.params.id;
+  const requesterID = req.payload._id;
+
+  // Validate the claim ID
+  if (!mongoose.isValidObjectId(claimID)) {
+    res.status(400).json({ message: "Invalid claim ID." });
+    return;
+  }
+
+  // Retrieve the claim
+  const claim = await Claim.findById(claimID);
+
+  if (!claim) {
+    res.status(404).json({ message: "Claim not found." });
+    return;
+  }
+
+  // Verify claim ownership
+  if (!claim.requester.equals(requesterID)) {
+    res.status(403).json({
+      message: "You cannot decline another user's claim.",
+    });
+    return;
+  }
+
+  // Validate claim status
+  if (claim.status !== "selected") {
+    res.status(409).json({
+      message: "Only selected claims can be declined.",
+    });
+    return;
+  }
+
+  // Retrieve the associated listing
+  const listing = await Listing.findById(claim.listing);
+
+  if (!listing) {
+    res.status(404).json({ message: "Listing not found." });
+    return;
+  }
+
+  // Validate listing state
+  if (
+    listing.status !== "available" ||
+    !listing.selectedClaim ||
+    !listing.selectedClaim.equals(claim._id) ||
+    listing.requestsOpen !== false
+  ) {
+    res.status(409).json({
+      message: "This listing is no longer eligible for declining.",
+    });
+    return;
+  }
+
+  // Conditionally decline the claim
+  const updatedClaim = await Claim.findOneAndUpdate(
+    {
+      _id: claim._id,
+      requester: requesterID,
+      listing: listing._id,
+      status: "selected",
+    },
+    {
+      $set: {
+        status: "declined",
+      },
+    },
+    {
+      returnDocument: "after",
+      runValidators: true,
+    }
+  );
+
+  if (!updatedClaim) {
+    res.status(409).json({
+      message: "This claim could not be declined.",
+    });
+    return;
+  }
+
+  // Release the selected claim from the listing
+  const updatedListing = await Listing.findOneAndUpdate(
+    {
+      _id: listing._id,
+      status: "available",
+      selectedClaim: claim._id,
+      requestsOpen: false,
+    },
+    {
+      $set: {
+        selectedClaim: null,
+        requestsOpen: false,
+      },
+    },
+    {
+      returnDocument: "after",
+      runValidators: true,
+    }
+  );
+
+  // Handle an unsuccessful listing update
+  if (!updatedListing) {
+    // Check the current listing state before attempting rollback
+    const currentListing = await Listing.findById(listing._id);
+
+    if (
+      currentListing &&
+      currentListing.status === "available" &&
+      currentListing.selectedClaim?.equals(claim._id) &&
+      currentListing.requestsOpen === false
+    ) {
+      const rollback = await Claim.updateOne(
+        {
+          _id: claim._id,
+          status: "declined",
+        },
+        {
+          $set: {
+            status: "selected",
+          },
+        }
+      );
+
+      if (rollback.matchedCount > 0) {
+        res.status(409).json({
+          message: "This listing could not be released.",
+        });
+        return;
+      }
+    }
+
+    res.status(500).json({
+      message: "Declining the claim requires reconciliation.",
+    });
+    return;
+  }
+
+  // Return successful response
+  res.status(200).json({
+    message: "Claim declined successfully.",
+    claimId: updatedClaim._id,
+    listingId: updatedListing._id,
+  });
+};
+
+// PATCH Cancel a confirmed claim
+const cancelClaim = async (req, res) => {
+  const claimID = req.params.id;
+  const requesterID = req.payload._id;
+
+  // Validate the claim ID
+  if (!mongoose.isValidObjectId(claimID)) {
+    res.status(400).json({ message: "Invalid claim ID." });
+    return;
+  }
+
+  // Retrieve the claim
+  const claim = await Claim.findById(claimID);
+
+  if (!claim) {
+    res.status(404).json({ message: "Claim not found." });
+    return;
+  }
+
+  // Verify claim ownership
+  if (!claim.requester.equals(requesterID)) {
+    res.status(403).json({
+      message: "You cannot cancel another user's claim.",
+    });
+    return;
+  }
+
+  // Validate claim status
+  if (claim.status !== "confirmed") {
+    res.status(409).json({
+      message: "Only confirmed claims can be cancelled.",
+    });
+    return;
+  }
+
+  // Retrieve the associated listing
+  const listing = await Listing.findById(claim.listing);
+
+  if (!listing) {
+    res.status(404).json({ message: "Listing not found." });
+    return;
+  }
+
+  // Validate listing state
+  if (
+    listing.status !== "reserved" ||
+    !listing.selectedClaim ||
+    !listing.selectedClaim.equals(claim._id) ||
+    listing.requestsOpen !== false
+  ) {
+    res.status(409).json({
+      message: "This listing is no longer eligible for cancellation.",
+    });
+    return;
+  }
+
+  // Conditionally cancel the claim
+  const updatedClaim = await Claim.findOneAndUpdate(
+    {
+      _id: claim._id,
+      requester: requesterID,
+      listing: listing._id,
+      status: "confirmed",
+    },
+    {
+      $set: {
+        status: "cancelled",
+      },
+    },
+    {
+      returnDocument: "after",
+      runValidators: true,
+    }
+  );
+
+  if (!updatedClaim) {
+    res.status(409).json({
+      message: "This claim could not be cancelled.",
+    });
+    return;
+  }
+
+  // Release the reserved listing
+  const updatedListing = await Listing.findOneAndUpdate(
+    {
+      _id: listing._id,
+      status: "reserved",
+      selectedClaim: claim._id,
+      requestsOpen: false,
+    },
+    {
+      $set: {
+        status: "available",
+        selectedClaim: null,
+        requestsOpen: false,
+      },
+    },
+    {
+      returnDocument: "after",
+      runValidators: true,
+    }
+  );
+
+  // Handle an unsuccessful listing update
+  if (!updatedListing) {
+    const currentListing = await Listing.findById(listing._id);
+
+    // Attempt rollback only if the listing is still reserved
+    // for the same claim
+    if (
+      currentListing &&
+      currentListing.status === "reserved" &&
+      currentListing.selectedClaim?.equals(claim._id) &&
+      currentListing.requestsOpen === false
+    ) {
+      const rollback = await Claim.updateOne(
+        {
+          _id: claim._id,
+          status: "cancelled",
+        },
+        {
+          $set: {
+            status: "confirmed",
+          },
+        }
+      );
+
+      if (rollback.matchedCount > 0) {
+        res.status(409).json({
+          message: "This listing could not be released.",
+        });
+        return;
+      }
+    }
+
+    res.status(500).json({
+      message: "Cancelling the claim requires reconciliation.",
+    });
+    return;
+  }
+
+  // Return successful response
+  res.status(200).json({
+    message: "Claim cancelled successfully.",
+    claimId: updatedClaim._id,
+    listingId: updatedListing._id,
+  });
+};
+
+
+module.exports = {
+  createClaim,
+  getListingClaims,
+  withdrawClaim,
+  reactivateClaim,
+  selectClaim,
+  confirmClaim,
+  declineClaim,
+  cancelClaim
+};
