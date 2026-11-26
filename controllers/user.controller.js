@@ -1,4 +1,6 @@
 const User = require("../models/User.model");
+const Listing = require("../models/Listing.model");
+const Claim = require("../models/Claim.model");
 
 const updateLocation = async (req, res) => {
   const userID = req.payload._id;
@@ -44,4 +46,38 @@ const updateLocation = async (req, res) => {
   }
 };
 
-module.exports = {updateLocation};
+// GET All listings belonging to the authenticated user
+const getMyListings = async (req, res) => {
+  const userID = req.payload._id;
+
+  // Retrieve all listings created by the authenticated user
+  const listings = await Listing.find({
+    giver: userID,
+  })
+    .select(
+      "_id title imageUrl category quantity neighbourhood status requestsOpen selectedClaim requestDeadline collectionDeadline createdAt",
+    )
+    .sort({ createdAt: -1 });
+
+  res.status(200).json(listings);
+};
+
+// GET All claims belonging to the authenticated user
+const getMyClaims = async (req, res) => {
+  const userID = req.payload._id;
+
+  // Retrieve all claims made by the authenticated user
+  const claims = await Claim.find({
+    requester: userID,
+  })
+    .select("_id listing status confirmationDeadline createdAt updatedAt")
+    .populate(
+      "listing",
+      "_id title imageUrl category quantity neighbourhood status requestsOpen requestDeadline collectionDeadline",
+    )
+    .sort({ createdAt: -1 });
+
+  res.status(200).json(claims);
+};
+
+module.exports = { updateLocation, getMyListings, getMyClaims };
