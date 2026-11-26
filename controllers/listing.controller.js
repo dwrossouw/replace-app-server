@@ -1,6 +1,6 @@
 const Listing = require("../models/Listing.model");
 const User = require("../models/User.model");
-const Claim = require("../models/Claim.model")
+const Claim = require("../models/Claim.model");
 const mongoose = require("mongoose");
 const { uploadImage, deleteImage } = require("../utils/cloudinary.utils");
 
@@ -175,6 +175,7 @@ const getListings = async (req, res) => {
     status: "available",
     requestsOpen: true,
     requestDeadline: { $gt: new Date() },
+    selectedClaim: null,
     collectionLocation: {
       $near: {
         $geometry: {
@@ -197,10 +198,11 @@ const getListings = async (req, res) => {
     filter.category = category;
   }
 
-  const listings = await Listing.find(filter).populate(
-    "giver",
-    "displayName neighbourhood",
-  );
+  const listings = await Listing.find(filter)
+    .select(
+      "title description category quantity imageUrl neighbourhood status requestsOpen requestDeadline collectionDeadline createdAt giver",
+    )
+    .populate("giver", "displayName neighbourhood");
 
   res.status(200).json(listings);
 };
@@ -213,10 +215,11 @@ const getListingDetails = async (req, res) => {
     res.status(400).json({ message: "Invalid listing ID" });
     return;
   }
-  const listingDetails = await Listing.findById(id).populate(
-    "giver",
-    "displayName neighbourhood",
-  );
+  const listingDetails = await Listing.findById(id)
+    .select(
+      "title description category quantity imageUrl neighbourhood status requestsOpen requestDeadline collectionDeadline createdAt giver",
+    )
+    .populate("giver", "displayName neighbourhood");
 
   if (!listingDetails) {
     res.status(404).json({ message: "Listing not found." });
@@ -250,9 +253,15 @@ const updateListing = async (req, res) => {
     return;
   }
 
-  // Verify listing status
-  if (listingDetails.status !== "available") {
-    res.status(409).json({ message: "Listing status has changed." });
+  // Verify listing status and recipient selection
+  if (
+    listingDetails.status !== "available" ||
+    listingDetails.selectedClaim !== null ||
+    listingDetails.collectionDeadline <= new Date()
+  ) {
+    res.status(409).json({
+      message: "This listing is no longer eligible for editing.",
+    });
     return;
   }
 
@@ -281,18 +290,40 @@ const updateListing = async (req, res) => {
     return;
   }
 
-  // Define fields the user is allowed to update
-  const allowedFields = [
-    "title",
-    "description",
-    "category",
-    "quantity",
-    "neighbourhood",
-    "collectionLocation",
-    "requestDeadline",
-    "collectionDeadline",
-  ];
+  // Check whether anyone has ever requested this listing
+  const hasClaims = await Claim.exists({
+    listing: listingID,
+  });
 
+  // Define editable fields based on claim history
+  const allowedFields = hasClaims
+    ? ["description"]
+    : [
+        "title",
+        "description",
+        "category",
+        "quantity",
+        "neighbourhood",
+        "collectionLocation",
+        "requestDeadline",
+        "collectionDeadline",
+      ];
+
+  // Identify fields that cannot be edited
+  const forbiddenFields = Object.keys(listingData).filter(
+    (field) => !allowedFields.includes(field),
+  );
+
+  // Reject attempts to modify restricted fields
+  if (forbiddenFields.length > 0) {
+    res.status(400).json({
+      message: "One or more fields cannot be edited.",
+      forbiddenFields: forbiddenFields,
+    });
+    return;
+  }
+
+  // Construct the permitted updates
   const updatedDetails = {};
 
   for (const field of allowedFields) {
@@ -485,7 +516,7 @@ const reopenListing = async (req, res) => {
     {
       returnDocument: "after",
       runValidators: true,
-    }
+    },
   );
 
   // Check whether the update succeeded
@@ -521,7 +552,7 @@ const getCollectionDetails = async (req, res) => {
 
   // Retrieve the listing, including private collection fields
   const listing = await Listing.findById(listingID).select(
-    "+collectionLocation +collectionInstructions"
+    "+collectionLocation +collectionInstructions",
   );
 
   if (!listing) {
@@ -651,7 +682,7 @@ const completeListing = async (req, res) => {
     {
       returnDocument: "after",
       runValidators: true,
-    }
+    },
   );
 
   if (!updatedListing) {
@@ -676,7 +707,7 @@ const completeListing = async (req, res) => {
     {
       returnDocument: "after",
       runValidators: true,
-    }
+    },
   );
 
   // Attempt compensation if the claim update fails
@@ -695,7 +726,7 @@ const completeListing = async (req, res) => {
           $set: {
             status: "reserved",
           },
-        }
+        },
       );
 
       if (rollback.matchedCount > 0) {
@@ -729,7 +760,7 @@ const completeListing = async (req, res) => {
       },
       {
         runValidators: true,
-      }
+      },
     );
   } catch (error) {
     console.error("Failed to close remaining claims:", error);
@@ -763,5 +794,5 @@ module.exports = {
   deleteListing,
   reopenListing,
   getCollectionDetails,
-  completeListing
+  completeListing,
 };

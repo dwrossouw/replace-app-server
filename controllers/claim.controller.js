@@ -53,6 +53,7 @@ const createClaim = async (req, res) => {
   if (
     listing.status !== "available" ||
     listing.requestsOpen !== true ||
+    listing.selectedClaim !== null ||
     listing.requestDeadline <= now ||
     listing.collectionDeadline <= now
   ) {
@@ -211,6 +212,7 @@ const reactivateClaim = async (req, res) => {
   if (
     listing.status !== "available" ||
     listing.requestsOpen !== true ||
+    listing.selectedClaim !== null ||
     listing.requestDeadline <= now ||
     listing.collectionDeadline <= now
   ) {
