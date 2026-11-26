@@ -6,7 +6,7 @@ const upload = require("../middlewares/upload.middlewares");
 router.post("/", verifyToken, upload.single("image"), createListing);
 router.get("/", getListings);
 router.get("/:id", getListingDetails);
-router.patch("/:id", verifyToken, updateListing);
+router.patch("/:id", verifyToken,upload.single("image"), updateListing);
 router.delete("/:id", verifyToken, deleteListing)
 
 module.exports = router;

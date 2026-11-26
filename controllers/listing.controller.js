@@ -2,7 +2,7 @@ const Listing = require("../models/Listing.model");
 const User = require("../models/User.model");
 const Claim = require("../models/Claim.model");
 const mongoose = require("mongoose");
-const { uploadImage } = require("../utils/cloudinary.utils");
+const { uploadImage, deleteImage } = require("../utils/cloudinary.utils");
 
 // POST Create a new listing
 const createListing = async (req, res) => {
@@ -168,41 +168,71 @@ const getListingDetails = async (req, res) => {
   res.status(200).json(listingDetails);
 };
 
-// // PATCH Update listing information
-// router.patch("/:id", verifyToken, async (req, res) => {});
+// PATCH Update listing information
 const updateListing = async (req, res) => {
   const userID = req.payload._id;
   const listingID = req.params.id;
 
+  // Validate listing ID
   if (!mongoose.isValidObjectId(listingID)) {
-    res.status(400).json({ message: "Invalid listing ID" });
+    res.status(400).json({ message: "Invalid listing ID." });
     return;
   }
 
-  const listingDetails = await Listing.findById(listingID);
+  // Retrieve listing, including the private image public ID
+  const listingDetails = await Listing.findById(listingID)
+    .select("+imagePublicId");
 
   if (!listingDetails) {
     res.status(404).json({ message: "Listing not found." });
     return;
   }
 
+  // Verify ownership
   if (!listingDetails.giver.equals(userID)) {
     res.status(403).json({ message: "Listing does not belong to user." });
     return;
   }
 
+  // Verify listing status
   if (listingDetails.status !== "available") {
     res.status(409).json({ message: "Listing status has changed." });
     return;
   }
 
+  // Support both multipart form-data and raw JSON
+  let listingData;
+
+  if (req.is("multipart/form-data")) {
+    try {
+      listingData =
+        req.body.listing !== undefined
+          ? JSON.parse(req.body.listing)
+          : {};
+    } catch (error) {
+      res.status(400).json({ message: "Invalid listing data." });
+      return;
+    }
+  } else {
+    listingData = req.body ?? {};
+  }
+
+  // Validate the listing data object
+  if (
+    !listingData ||
+    typeof listingData !== "object" ||
+    Array.isArray(listingData)
+  ) {
+    res.status(400).json({ message: "Invalid listing data." });
+    return;
+  }
+
+  // Define fields the user is allowed to update
   const allowedFields = [
     "title",
     "description",
     "category",
     "quantity",
-    "imageUrl",
-    "imagePublicId",
     "neighbourhood",
     "collectionLocation",
     "requestDeadline",
@@ -210,19 +240,26 @@ const updateListing = async (req, res) => {
   ];
 
   const updatedDetails = {};
+
   for (const field of allowedFields) {
-    if (req.body[field] !== undefined) {
-      updatedDetails[field] = req.body[field];
+    if (listingData[field] !== undefined) {
+      updatedDetails[field] = listingData[field];
     }
   }
 
-  if (Object.keys(updatedDetails).length === 0) {
+  // Allow image-only updates
+  if (Object.keys(updatedDetails).length === 0 && !req.file) {
     res.status(400).json({ message: "No fields to update." });
     return;
   }
 
+  // Remember the original image public ID
+  const oldImagePublicId = listingDetails.imagePublicId;
+
+  // Apply listing changes
   listingDetails.set(updatedDetails);
 
+  // Validate updated deadlines
   if (
     updatedDetails.requestDeadline !== undefined ||
     updatedDetails.collectionDeadline !== undefined
@@ -242,8 +279,56 @@ const updateListing = async (req, res) => {
     }
   }
 
-  await listingDetails.save();
-  res.status(200).json({ message: "Listing updated successfully." });
+  // Validate the document before uploading a new image
+  await listingDetails.validate();
+
+  let newImagePublicId = null;
+
+  try {
+    // Upload a new image only if one was provided
+    if (req.file) {
+      const uploadResult = await uploadImage(req.file.buffer);
+
+      newImagePublicId = uploadResult.public_id;
+
+      listingDetails.set({
+        imageUrl: uploadResult.secure_url,
+        imagePublicId: uploadResult.public_id,
+      });
+    }
+
+    // Save the updated listing
+    await listingDetails.save();
+
+  } catch (error) {
+    // Remove the newly uploaded image if saving fails
+    if (newImagePublicId) {
+      try {
+        await deleteImage(newImagePublicId);
+      } catch (cleanupError) {
+        console.error("New image cleanup failed:", cleanupError);
+      }
+    }
+
+    throw error;
+  }
+
+  // Delete the old image only after a successful database save
+  if (
+    newImagePublicId &&
+    oldImagePublicId &&
+    oldImagePublicId !== newImagePublicId
+  ) {
+    try {
+      await deleteImage(oldImagePublicId);
+    } catch (cleanupError) {
+      console.error("Old image cleanup failed:", cleanupError);
+    }
+  }
+
+  res.status(200).json({
+    message: "Listing updated successfully.",
+  });
 };
 
 // // DELETE Cancel a listing

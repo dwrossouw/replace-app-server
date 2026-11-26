@@ -21,4 +21,8 @@ const uploadImage = (buffer) => {
   });
 };
 
-module.exports = { uploadImage };
+const deleteImage = async (publicId) => {
+  return await cloudinary.uploader.destroy(publicId);
+};
+
+module.exports = { uploadImage, deleteImage };
