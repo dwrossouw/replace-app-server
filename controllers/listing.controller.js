@@ -9,27 +9,27 @@ const createListing = async (req, res) => {
   const userID = req.payload._id;
 
   if (!req.file) {
-  res.status(400).json({ message: "A listing image is required." });
-  return;
-}
+    res.status(400).json({ message: "A listing image is required." });
+    return;
+  }
 
-let listingData;
+  let listingData;
 
-try {
-  listingData = JSON.parse(req.body.listing);
-} catch (error) {
-  res.status(400).json({ message: "Invalid listing data." });
-  return;
-}
+  try {
+    listingData = JSON.parse(req.body.listing);
+  } catch (error) {
+    res.status(400).json({ message: "Invalid listing data." });
+    return;
+  }
 
-if (
-  !listingData ||
-  typeof listingData !== "object" ||
-  Array.isArray(listingData)
-) {
-  res.status(400).json({ message: "Invalid listing data." });
-  return;
-}
+  if (
+    !listingData ||
+    typeof listingData !== "object" ||
+    Array.isArray(listingData)
+  ) {
+    res.status(400).json({ message: "Invalid listing data." });
+    return;
+  }
 
   const {
     title,
@@ -106,7 +106,7 @@ if (
     return;
   }
 
-  const uploadResult = await uploadImage (req.file.buffer);
+  const uploadResult = await uploadImage(req.file.buffer);
 
   const newListing = await Listing.create({
     giver: userID,
@@ -131,13 +131,70 @@ if (
 
 // GET Retrieve and filter available listings
 const getListings = async (req, res) => {
-  const { category } = req.query;
+  console.log("query object: ", req.query);
+  const { category, lng, lat, radiusKm = 2 } = req.query;
+
+  if (
+    typeof lng !== "string" ||
+    !lng.trim() ||
+    typeof lat !== "string" ||
+    !lat.trim()
+  ) {
+    res.status(400).json({ message: "Invalid coordinates." });
+    return;
+  }
+
+  const longitude = Number(lng);
+  const latitude = Number(lat);
+  const radius = Number(radiusKm);
+
+  if (
+    !Number.isFinite(longitude) ||
+    !Number.isFinite(latitude) ||
+    longitude > 180 ||
+    longitude < -180 ||
+    latitude > 90 ||
+    latitude < -90
+  ) {
+    res.status(400).json({ message: "Invalid coordinates." });
+    return;
+  }
+
+  const allowedRadii = [1, 2, 3, 5];
+
+  if (
+    (typeof radiusKm !== "string" && radiusKm !== 2) ||
+    !allowedRadii.includes(radius)
+  ) {
+    res.status(400).json({
+      message: "Invalid radius. Allowed distances are 1, 2, 3 and 5 km.",
+    });
+    return;
+  }
+
   const filter = {
     status: "available",
     requestsOpen: true,
     requestDeadline: { $gt: new Date() },
+    collectionLocation: {
+      $near: {
+        $geometry: {
+          type: "Point",
+          coordinates: [longitude, latitude],
+        },
+        $maxDistance: radius * 1000,
+      },
+    },
   };
-  if (category) {
+
+  const allowedCategories = Listing.schema.path("category").enumValues;
+
+  if (category !== undefined) {
+    if (typeof category !== "string" || !allowedCategories.includes(category)) {
+      res.status(400).json({ message: "Invalid category." });
+      return;
+    }
+
     filter.category = category;
   }
 
@@ -180,8 +237,8 @@ const updateListing = async (req, res) => {
   }
 
   // Retrieve listing, including the private image public ID
-  const listingDetails = await Listing.findById(listingID)
-    .select("+imagePublicId");
+  const listingDetails =
+    await Listing.findById(listingID).select("+imagePublicId");
 
   if (!listingDetails) {
     res.status(404).json({ message: "Listing not found." });
@@ -206,9 +263,7 @@ const updateListing = async (req, res) => {
   if (req.is("multipart/form-data")) {
     try {
       listingData =
-        req.body.listing !== undefined
-          ? JSON.parse(req.body.listing)
-          : {};
+        req.body.listing !== undefined ? JSON.parse(req.body.listing) : {};
     } catch (error) {
       res.status(400).json({ message: "Invalid listing data." });
       return;
@@ -299,7 +354,6 @@ const updateListing = async (req, res) => {
 
     // Save the updated listing
     await listingDetails.save();
-
   } catch (error) {
     // Remove the newly uploaded image if saving fails
     if (newImagePublicId) {
@@ -359,10 +413,9 @@ const deleteListing = async (req, res) => {
     return;
   }
 
-  listingDetails.set({status: "cancelled", requestsOpen: false});
+  listingDetails.set({ status: "cancelled", requestsOpen: false });
   await listingDetails.save();
   res.status(200).json({ message: "Listing cancelled successfully." });
-
 };
 
 module.exports = {
@@ -370,5 +423,5 @@ module.exports = {
   getListings,
   getListingDetails,
   updateListing,
-  deleteListing
+  deleteListing,
 };
