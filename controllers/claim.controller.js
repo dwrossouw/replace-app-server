@@ -85,4 +85,80 @@ const createClaim = async (req, res) => {
     .json({ message: "Claim created successfully.", claimId: newClaim._id });
 };
 
-module.exports = {createClaim};
+// GET View all claims for particular item
+const getListingClaims = async (req, res) => {
+  const listingID = req.params.id;
+  const giverID = req.payload._id;
+
+  if (!mongoose.isValidObjectId(listingID)) {
+    res.status(400).json({ message: "Invalid listing ID" });
+    return;
+  }
+
+  const listingDetails = await Listing.findById(listingID);
+
+  if (!listingDetails) {
+    res.status(404).json({ message: "Listing not found." });
+    return;
+  }
+
+  if (!listingDetails.giver.equals(giverID)) {
+    res.status(403).json({ message: "Listing does not belong to user." });
+    return;
+  }
+
+  const claims = await Claim.find({ listing: listingID })
+    .select("+message")
+    .populate("requester", "displayName neighbourhood")
+    .sort({ createdAt: -1 });
+
+  res.status(200).json(claims);
+};
+
+// PATCH Withdraw a claim
+
+const withdrawClaim = async (req, res) => {
+  const claimID = req.params.id;
+  const requesterID = req.payload._id;
+
+  // Validate the claim ID
+  if (!mongoose.isValidObjectId(claimID)) {
+    res.status(400).json({ message: "Invalid claim ID." });
+    return;
+  }
+
+  // Retrieve the claim
+  const claim = await Claim.findById(claimID);
+
+  if (!claim) {
+    res.status(404).json({ message: "Claim not found." });
+    return;
+  }
+
+  // Verify claim ownership
+  if (!claim.requester.equals(requesterID)) {
+    res.status(403).json({
+      message: "You cannot withdraw another user's claim.",
+    });
+    return;
+  }
+
+  // Only pending claims can be withdrawn
+  if (claim.status !== "pending") {
+    res.status(409).json({
+      message: "Only pending claims can be withdrawn.",
+    });
+    return;
+  }
+
+  // Update and save the claim
+  claim.status = "withdrawn";
+
+  await claim.save();
+
+  res.status(200).json({
+    message: "Claim withdrawn successfully.",
+  });
+};
+
+module.exports = { createClaim, getListingClaims, withdrawClaim };
