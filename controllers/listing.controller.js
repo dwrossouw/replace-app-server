@@ -1,6 +1,5 @@
 const Listing = require("../models/Listing.model");
 const User = require("../models/User.model");
-const Claim = require("../models/Claim.model");
 const mongoose = require("mongoose");
 const { uploadImage, deleteImage } = require("../utils/cloudinary.utils");
 
