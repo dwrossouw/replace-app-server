@@ -9,4 +9,7 @@ router.use("/users", userRouter);
 const listingRouter = require("./listing.routes");
 router.use("/listings", listingRouter);
 
+const uploadRouter = require("./upload.routes");
+router.use("/upload", uploadRouter);
+
 module.exports = router;
