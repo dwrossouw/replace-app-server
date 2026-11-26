@@ -222,15 +222,47 @@ const updateListing = async (req, res) => {
   }
 
   await listingDetails.save();
-  res.status(200).json({message: "Listing updated successfully."})
+  res.status(200).json({ message: "Listing updated successfully." });
 };
 
 // // DELETE Cancel a listing
 // router.delete("/:id", verifyToken, async (req, res) => {});
+const deleteListing = async (req, res) => {
+  const userID = req.payload._id;
+  const listingID = req.params.id;
+
+  if (!mongoose.isValidObjectId(listingID)) {
+    res.status(400).json({ message: "Invalid listing ID" });
+    return;
+  }
+
+  const listingDetails = await Listing.findById(listingID);
+
+  if (!listingDetails) {
+    res.status(404).json({ message: "Listing not found." });
+    return;
+  }
+
+  if (!listingDetails.giver.equals(userID)) {
+    res.status(403).json({ message: "Listing does not belong to user." });
+    return;
+  }
+
+  if (listingDetails.status !== "available") {
+    res.status(409).json({ message: "Listing status has changed." });
+    return;
+  }
+
+  listingDetails.set({status: "cancelled", requestsOpen: false});
+  await listingDetails.save();
+  res.status(200).json({ message: "Listing cancelled successfully." });
+
+};
 
 module.exports = {
   createListing,
   getListings,
   getListingDetails,
   updateListing,
+  deleteListing
 };
