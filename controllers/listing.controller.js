@@ -1,5 +1,6 @@
 const Listing = require("../models/Listing.model");
 const User = require("../models/User.model");
+const Claim = require("../models/Claim.model")
 const mongoose = require("mongoose");
 const { uploadImage, deleteImage } = require("../utils/cloudinary.utils");
 
@@ -416,10 +417,351 @@ const deleteListing = async (req, res) => {
   res.status(200).json({ message: "Listing cancelled successfully." });
 };
 
+// PATCH Reopen a listing for new requests
+const reopenListing = async (req, res) => {
+  const listingID = req.params.id;
+  const giverID = req.payload._id;
+
+  // Validate the listing ID
+  if (!mongoose.isValidObjectId(listingID)) {
+    res.status(400).json({
+      message: "Invalid listing ID.",
+    });
+    return;
+  }
+
+  // Retrieve the listing
+  const listing = await Listing.findById(listingID);
+
+  if (!listing) {
+    res.status(404).json({
+      message: "Listing not found.",
+    });
+    return;
+  }
+
+  // Verify listing ownership
+  if (!listing.giver.equals(giverID)) {
+    res.status(403).json({
+      message: "Only the listing owner can reopen this listing.",
+    });
+    return;
+  }
+
+  const now = new Date();
+
+  // Validate listing eligibility
+  if (
+    listing.status !== "available" ||
+    listing.selectedClaim !== null ||
+    listing.requestsOpen !== false ||
+    listing.requestDeadline <= now ||
+    listing.collectionDeadline <= now
+  ) {
+    res.status(409).json({
+      message: "This listing is not eligible for reopening.",
+    });
+    return;
+  }
+
+  const updateTime = new Date();
+
+  // Conditionally reopen the listing
+  const updatedListing = await Listing.findOneAndUpdate(
+    {
+      _id: listingID,
+      giver: giverID,
+      status: "available",
+      selectedClaim: null,
+      requestsOpen: false,
+      requestDeadline: { $gt: updateTime },
+      collectionDeadline: { $gt: updateTime },
+    },
+    {
+      $set: {
+        requestsOpen: true,
+      },
+    },
+    {
+      returnDocument: "after",
+      runValidators: true,
+    }
+  );
+
+  // Check whether the update succeeded
+  if (!updatedListing) {
+    res.status(409).json({
+      message: "This listing could not be reopened.",
+    });
+    return;
+  }
+
+  // Return successful response
+  res.status(200).json({
+    message: "Listing reopened successfully.",
+    listingId: updatedListing._id,
+  });
+};
+
+// GET Private collection details
+const getCollectionDetails = async (req, res) => {
+  const listingID = req.params.id;
+  const userID = req.payload._id;
+
+  // Prevent caching of private collection information
+  res.set("Cache-Control", "no-store");
+
+  // Validate the listing ID
+  if (!mongoose.isValidObjectId(listingID)) {
+    res.status(400).json({
+      message: "Invalid listing ID.",
+    });
+    return;
+  }
+
+  // Retrieve the listing, including private collection fields
+  const listing = await Listing.findById(listingID).select(
+    "+collectionLocation +collectionInstructions"
+  );
+
+  if (!listing) {
+    res.status(404).json({
+      message: "Listing not found.",
+    });
+    return;
+  }
+
+  // Check whether the authenticated user is the giver
+  const isGiver = listing.giver.equals(userID);
+
+  // If the user is not the giver, verify recipient eligibility
+  if (!isGiver) {
+    const now = new Date();
+
+    // Validate listing state
+    if (
+      listing.status !== "reserved" ||
+      !listing.selectedClaim ||
+      listing.collectionDeadline <= now
+    ) {
+      res.status(403).json({
+        message: "You do not have access to collection details.",
+      });
+      return;
+    }
+
+    // Verify that the user is the confirmed recipient
+    const confirmedClaim = await Claim.findOne({
+      _id: listing.selectedClaim,
+      listing: listing._id,
+      requester: userID,
+      status: "confirmed",
+    });
+
+    if (!confirmedClaim) {
+      res.status(403).json({
+        message: "You do not have access to collection details.",
+      });
+      return;
+    }
+  }
+
+  // Return only the necessary collection information
+  res.status(200).json({
+    listingId: listing._id,
+    neighbourhood: listing.neighbourhood,
+    collectionLocation: listing.collectionLocation,
+    collectionInstructions: listing.collectionInstructions,
+    collectionDeadline: listing.collectionDeadline,
+  });
+};
+
+// PATCH Mark a gift as successfully collected
+const completeListing = async (req, res) => {
+  const listingID = req.params.id;
+  const giverID = req.payload._id;
+
+  // Validate the listing ID
+  if (!mongoose.isValidObjectId(listingID)) {
+    res.status(400).json({
+      message: "Invalid listing ID.",
+    });
+    return;
+  }
+
+  // Retrieve the listing
+  const listing = await Listing.findById(listingID);
+
+  if (!listing) {
+    res.status(404).json({
+      message: "Listing not found.",
+    });
+    return;
+  }
+
+  // Verify listing ownership
+  if (!listing.giver.equals(giverID)) {
+    res.status(403).json({
+      message: "Only the listing owner can complete this gift.",
+    });
+    return;
+  }
+
+  // Validate listing state
+  if (
+    listing.status !== "reserved" ||
+    !listing.selectedClaim ||
+    listing.requestsOpen !== false
+  ) {
+    res.status(409).json({
+      message: "This listing is not eligible for completion.",
+    });
+    return;
+  }
+
+  // Retrieve and validate the confirmed claim
+  const selectedClaim = await Claim.findOne({
+    _id: listing.selectedClaim,
+    listing: listing._id,
+    status: "confirmed",
+  });
+
+  if (!selectedClaim) {
+    res.status(409).json({
+      message: "No confirmed claim was found for this listing.",
+    });
+    return;
+  }
+
+  // Conditionally complete the listing
+  const updatedListing = await Listing.findOneAndUpdate(
+    {
+      _id: listing._id,
+      giver: giverID,
+      status: "reserved",
+      selectedClaim: selectedClaim._id,
+      requestsOpen: false,
+    },
+    {
+      $set: {
+        status: "completed",
+        requestsOpen: false,
+      },
+    },
+    {
+      returnDocument: "after",
+      runValidators: true,
+    }
+  );
+
+  if (!updatedListing) {
+    res.status(409).json({
+      message: "This listing could not be completed.",
+    });
+    return;
+  }
+
+  // Conditionally complete the recipient's claim
+  const updatedClaim = await Claim.findOneAndUpdate(
+    {
+      _id: selectedClaim._id,
+      listing: listing._id,
+      status: "confirmed",
+    },
+    {
+      $set: {
+        status: "completed",
+      },
+    },
+    {
+      returnDocument: "after",
+      runValidators: true,
+    }
+  );
+
+  // Attempt compensation if the claim update fails
+  if (!updatedClaim) {
+    const currentClaim = await Claim.findById(selectedClaim._id);
+
+    if (currentClaim && currentClaim.status === "confirmed") {
+      const rollback = await Listing.updateOne(
+        {
+          _id: listing._id,
+          status: "completed",
+          selectedClaim: selectedClaim._id,
+          requestsOpen: false,
+        },
+        {
+          $set: {
+            status: "reserved",
+          },
+        }
+      );
+
+      if (rollback.matchedCount > 0) {
+        res.status(409).json({
+          message: "The recipient's claim could not be completed.",
+        });
+        return;
+      }
+    }
+
+    res.status(500).json({
+      message: "Gift completion requires reconciliation.",
+    });
+    return;
+  }
+
+  // Close all remaining pending claims
+  let closedClaims;
+
+  try {
+    closedClaims = await Claim.updateMany(
+      {
+        listing: listing._id,
+        _id: { $ne: selectedClaim._id },
+        status: "pending",
+      },
+      {
+        $set: {
+          status: "not_selected",
+        },
+      },
+      {
+        runValidators: true,
+      }
+    );
+  } catch (error) {
+    console.error("Failed to close remaining claims:", error);
+
+    // The gift has already been completed.
+    // Do not reverse the successful collection.
+    res.status(200).json({
+      message: "Gift completed successfully.",
+      listingId: updatedListing._id,
+      claimId: updatedClaim._id,
+      pendingClaimsCleanupRequired: true,
+    });
+    return;
+  }
+
+  // Return successful response
+  res.status(200).json({
+    message: "Gift completed successfully.",
+    listingId: updatedListing._id,
+    claimId: updatedClaim._id,
+    closedClaims: closedClaims.modifiedCount,
+    pendingClaimsCleanupRequired: false,
+  });
+};
+
 module.exports = {
   createListing,
   getListings,
   getListingDetails,
   updateListing,
   deleteListing,
+  reopenListing,
+  getCollectionDetails,
+  completeListing
 };
