@@ -131,7 +131,6 @@ const createListing = async (req, res) => {
 
 // GET Retrieve and filter available listings
 const getListings = async (req, res) => {
-  console.log("query object: ", req.query);
   const { category, lng, lat, radiusKm = 2 } = req.query;
 
   if (
