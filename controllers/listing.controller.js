@@ -1,5 +1,6 @@
 const Listing = require("../models/Listing.model");
 const User = require("../models/User.model");
+const Claim = require("../models/Claim.model");
 const mongoose = require("mongoose");
 
 // POST Create a new listing
@@ -140,16 +141,96 @@ const getListingDetails = async (req, res) => {
     "displayName neighbourhood",
   );
 
-  if(!listingDetails){
-    res.status(404).json({message: "Listing not found."})
+  if (!listingDetails) {
+    res.status(404).json({ message: "Listing not found." });
   }
   res.status(200).json(listingDetails);
 };
 
 // // PATCH Update listing information
 // router.patch("/:id", verifyToken, async (req, res) => {});
+const updateListing = async (req, res) => {
+  const userID = req.payload._id;
+  const listingID = req.params.id;
+
+  if (!mongoose.isValidObjectId(listingID)) {
+    res.status(400).json({ message: "Invalid listing ID" });
+    return;
+  }
+
+  const listingDetails = await Listing.findById(listingID);
+
+  if (!listingDetails) {
+    res.status(404).json({ message: "Listing not found." });
+    return;
+  }
+
+  if (!listingDetails.giver.equals(userID)) {
+    res.status(403).json({ message: "Listing does not belong to user." });
+    return;
+  }
+
+  if (listingDetails.status !== "available") {
+    res.status(409).json({ message: "Listing status has changed." });
+    return;
+  }
+
+  const allowedFields = [
+    "title",
+    "description",
+    "category",
+    "quantity",
+    "imageUrl",
+    "imagePublicId",
+    "neighbourhood",
+    "collectionLocation",
+    "requestDeadline",
+    "collectionDeadline",
+  ];
+
+  const updatedDetails = {};
+  for (const field of allowedFields) {
+    if (req.body[field] !== undefined) {
+      updatedDetails[field] = req.body[field];
+    }
+  }
+
+  if (Object.keys(updatedDetails).length === 0) {
+    res.status(400).json({ message: "No fields to update." });
+    return;
+  }
+
+  listingDetails.set(updatedDetails);
+
+  if (
+    updatedDetails.requestDeadline !== undefined ||
+    updatedDetails.collectionDeadline !== undefined
+  ) {
+    if (listingDetails.requestDeadline <= new Date()) {
+      res.status(400).json({
+        message: "Request deadline must be in the future.",
+      });
+      return;
+    }
+
+    if (listingDetails.collectionDeadline <= listingDetails.requestDeadline) {
+      res.status(400).json({
+        message: "Collection deadline must be after the request deadline.",
+      });
+      return;
+    }
+  }
+
+  await listingDetails.save();
+  res.status(200).json({message: "Listing updated successfully."})
+};
 
 // // DELETE Cancel a listing
 // router.delete("/:id", verifyToken, async (req, res) => {});
 
-module.exports = { createListing, getListings, getListingDetails };
+module.exports = {
+  createListing,
+  getListings,
+  getListingDetails,
+  updateListing,
+};
