@@ -2,6 +2,7 @@ const Claim = require("../models/Claim.model");
 const User = require("../models/User.model");
 const Listing = require("../models/Listing.model");
 const mongoose = require("mongoose");
+const { createNotification } = require("../utils/notification.utils");
 
 //POST Create a new claim
 const createClaim = async (req, res) => {
@@ -81,6 +82,13 @@ const createClaim = async (req, res) => {
     message: message,
   });
 
+  await createNotification(
+    listing.giver,
+    listing._id,
+    "new_claim",
+    `${requester.displayName} has requested your gift: ${listing.title}.`,
+  );
+
   res
     .status(201)
     .json({ message: "Claim created successfully.", claimId: newClaim._id });
@@ -156,6 +164,19 @@ const withdrawClaim = async (req, res) => {
   claim.status = "withdrawn";
 
   await claim.save();
+
+  // Retrieve the associated listing
+  const listing = await Listing.findById(claim.listing);
+
+  // Notify the giver
+  if (listing) {
+    await createNotification(
+      listing.giver,
+      listing._id,
+      "claim_withdrawn",
+      `A request for your gift "${listing.title}" has been withdrawn.`,
+    );
+  }
 
   res.status(200).json({
     message: "Claim withdrawn successfully.",
@@ -236,6 +257,13 @@ const reactivateClaim = async (req, res) => {
 
   await claim.save();
 
+  await createNotification(
+    listing.giver,
+    listing._id,
+    "new_claim",
+    `A request for your gift "${listing.title}" has been reactivated.`,
+  );
+
   res.status(200).json({
     message: "Claim reactivated successfully.",
   });
@@ -295,8 +323,8 @@ const selectClaim = async (req, res) => {
   const confirmationDeadline = new Date(
     Math.min(
       now.getTime() + 3 * 60 * 60 * 1000,
-      listing.collectionDeadline.getTime()
-    )
+      listing.collectionDeadline.getTime(),
+    ),
   );
 
   // Conditionally update the listing
@@ -317,7 +345,7 @@ const selectClaim = async (req, res) => {
     {
       returnDocument: "before",
       runValidators: true,
-    }
+    },
   );
 
   // Check whether the listing update succeeded
@@ -344,7 +372,7 @@ const selectClaim = async (req, res) => {
     {
       returnDocument: "after",
       runValidators: true,
-    }
+    },
   );
 
   // Reverse the listing update if the claim no longer matches
@@ -364,7 +392,7 @@ const selectClaim = async (req, res) => {
             updatedListing.requestDeadline > new Date() &&
             updatedListing.collectionDeadline > new Date(),
         },
-      }
+      },
     );
 
     if (rollback.matchedCount === 0) {
@@ -379,6 +407,13 @@ const selectClaim = async (req, res) => {
     });
     return;
   }
+
+  await createNotification(
+    claim.requester,
+    listing._id,
+    "claim_selected",
+    `You've been selected to receive "${listing.title}"! Please confirm before your confirmation deadline.`,
+  );
 
   // Return successful response
   res.status(200).json({
@@ -468,7 +503,7 @@ const confirmClaim = async (req, res) => {
     {
       returnDocument: "after",
       runValidators: true,
-    }
+    },
   );
 
   if (!updatedListing) {
@@ -495,7 +530,7 @@ const confirmClaim = async (req, res) => {
     {
       returnDocument: "after",
       runValidators: true,
-    }
+    },
   );
 
   // Reverse the listing update if confirmation fails
@@ -511,7 +546,7 @@ const confirmClaim = async (req, res) => {
         $set: {
           status: "available",
         },
-      }
+      },
     );
 
     if (rollback.matchedCount === 0) {
@@ -526,6 +561,13 @@ const confirmClaim = async (req, res) => {
     });
     return;
   }
+
+  await createNotification(
+    listing.giver,
+    listing._id,
+    "claim_confirmed",
+    `The recipient has confirmed collection of "${listing.title}".`,
+  );
 
   // Return successful response
   res.status(200).json({
@@ -607,7 +649,7 @@ const declineClaim = async (req, res) => {
     {
       returnDocument: "after",
       runValidators: true,
-    }
+    },
   );
 
   if (!updatedClaim) {
@@ -634,7 +676,7 @@ const declineClaim = async (req, res) => {
     {
       returnDocument: "after",
       runValidators: true,
-    }
+    },
   );
 
   // Handle an unsuccessful listing update
@@ -657,7 +699,7 @@ const declineClaim = async (req, res) => {
           $set: {
             status: "selected",
           },
-        }
+        },
       );
 
       if (rollback.matchedCount > 0) {
@@ -673,6 +715,13 @@ const declineClaim = async (req, res) => {
     });
     return;
   }
+
+  await createNotification(
+    listing.giver,
+    listing._id,
+    "claim_declined",
+    `The selected recipient has declined "${listing.title}". You can select another requester.`,
+  );
 
   // Return successful response
   res.status(200).json({
@@ -754,7 +803,7 @@ const cancelClaim = async (req, res) => {
     {
       returnDocument: "after",
       runValidators: true,
-    }
+    },
   );
 
   if (!updatedClaim) {
@@ -782,7 +831,7 @@ const cancelClaim = async (req, res) => {
     {
       returnDocument: "after",
       runValidators: true,
-    }
+    },
   );
 
   // Handle an unsuccessful listing update
@@ -806,7 +855,7 @@ const cancelClaim = async (req, res) => {
           $set: {
             status: "confirmed",
           },
-        }
+        },
       );
 
       if (rollback.matchedCount > 0) {
@@ -823,6 +872,13 @@ const cancelClaim = async (req, res) => {
     return;
   }
 
+  await createNotification(
+    listing.giver,
+    listing._id,
+    "claim_cancelled",
+    `The recipient has cancelled their collection of "${listing.title}".`,
+  );
+
   // Return successful response
   res.status(200).json({
     message: "Claim cancelled successfully.",
@@ -830,7 +886,6 @@ const cancelClaim = async (req, res) => {
     listingId: updatedListing._id,
   });
 };
-
 
 module.exports = {
   createClaim,
@@ -840,5 +895,5 @@ module.exports = {
   selectClaim,
   confirmClaim,
   declineClaim,
-  cancelClaim
+  cancelClaim,
 };

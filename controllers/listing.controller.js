@@ -3,6 +3,7 @@ const User = require("../models/User.model");
 const Claim = require("../models/Claim.model");
 const mongoose = require("mongoose");
 const { uploadImage, deleteImage } = require("../utils/cloudinary.utils");
+const {createNotification} = require("../utils/notification.utils");
 
 // POST Create a new listing
 const createListing = async (req, res) => {
@@ -415,14 +416,13 @@ const updateListing = async (req, res) => {
   });
 };
 
-// // DELETE Cancel a listing
-// router.delete("/:id", verifyToken, async (req, res) => {});
+// DELETE Cancel a listing
 const deleteListing = async (req, res) => {
   const userID = req.payload._id;
   const listingID = req.params.id;
 
   if (!mongoose.isValidObjectId(listingID)) {
-    res.status(400).json({ message: "Invalid listing ID" });
+    res.status(400).json({ message: "Invalid listing ID." });
     return;
   }
 
@@ -438,14 +438,55 @@ const deleteListing = async (req, res) => {
     return;
   }
 
-  if (listingDetails.status !== "available") {
-    res.status(409).json({ message: "Listing status has changed." });
+  // Prevent cancellation if a recipient has been selected
+  if (
+    listingDetails.status !== "available" ||
+    listingDetails.selectedClaim !== null
+  ) {
+    res.status(409).json({
+      message: "This listing is not eligible for cancellation.",
+    });
     return;
   }
 
-  listingDetails.set({ status: "cancelled", requestsOpen: false });
+  // Retrieve affected pending claims
+  const pendingClaims = await Claim.find({
+    listing: listingID,
+    status: "pending",
+  }).select("requester");
+
+  // Cancel the listing
+  listingDetails.set({
+    status: "cancelled",
+    requestsOpen: false,
+  });
+
   await listingDetails.save();
-  res.status(200).json({ message: "Listing cancelled successfully." });
+
+  // Cancel associated pending claims
+  await Claim.updateMany(
+    {
+      listing: listingID,
+      status: "pending",
+    },
+    {
+      $set: { status: "cancelled" },
+    },
+  );
+
+  // Notify affected requesters
+  for (const claim of pendingClaims) {
+    await createNotification(
+      claim.requester,
+      listingDetails._id,
+      "listing_cancelled",
+      `Unfortunately, the gift "${listingDetails.title}" is no longer available.`,
+    );
+  }
+
+  res.status(200).json({
+    message: "Listing cancelled successfully.",
+  });
 };
 
 // PATCH Reopen a listing for new requests
@@ -743,10 +784,22 @@ const completeListing = async (req, res) => {
     return;
   }
 
+  await createNotification(
+    selectedClaim.requester,
+    listing._id,
+    "gift_completed",
+    `Your collection of "${listing.title}" is complete. Thank you for being part of RePlace!`,
+  );
+
   // Close all remaining pending claims
   let closedClaims;
 
   try {
+    const pendingClaims = await Claim.find({
+      listing: listing._id,
+      _id: { $ne: selectedClaim._id },
+      status: "pending",
+    }).select("requester");
     closedClaims = await Claim.updateMany(
       {
         listing: listing._id,
@@ -762,6 +815,14 @@ const completeListing = async (req, res) => {
         runValidators: true,
       },
     );
+    for (const claim of pendingClaims) {
+      await createNotification(
+        claim.requester,
+        listing._id,
+        "claim_not_selected",
+        `The gift "${listing.title}" has been collected by another community member. Thank you for your interest!`,
+      );
+    }
   } catch (error) {
     console.error("Failed to close remaining claims:", error);
 

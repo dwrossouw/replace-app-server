@@ -12,4 +12,7 @@ router.use("/listings", listingRouter);
 const claimRouter = require("./claim.routes");
 router.use("/claims", claimRouter);
 
+const notificationRouter = require("./notificaiton.routes")
+router.use("/notifications", notificationRouter);
+
 module.exports = router;
