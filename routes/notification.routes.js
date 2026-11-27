@@ -3,9 +3,8 @@ const { getNotifications, markAllNotificationsAsRead, markNotificationAsRead } =
 const { verifyToken } = require("../middlewares/auth.middlewares");
 
 router.get("/", verifyToken, getNotifications);
-
 router.patch("/read-all", verifyToken, markAllNotificationsAsRead);
-
 router.patch("/:id/read", verifyToken, markNotificationAsRead);
+module.exports = router;
 
 module.exports = router;
