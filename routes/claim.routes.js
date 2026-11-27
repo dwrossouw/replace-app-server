@@ -5,7 +5,7 @@ const { withdrawClaim, reactivateClaim, selectClaim, confirmClaim, declineClaim,
 router.patch("/:id/withdraw", verifyToken, withdrawClaim);
 router.patch("/:id/reactivate", verifyToken, reactivateClaim)
 router.patch("/:id/select", verifyToken, selectClaim)
-router.patch("/:id/confirm", confirmClaim)
+router.patch("/:id/confirm", verifyToken, confirmClaim)
 router.patch("/:id/decline", verifyToken, declineClaim)
 router.patch("/:id/cancel", verifyToken, cancelClaim)
 

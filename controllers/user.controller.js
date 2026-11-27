@@ -2,6 +2,7 @@ const User = require("../models/User.model");
 const Listing = require("../models/Listing.model");
 const Claim = require("../models/Claim.model");
 
+// PATCH Update location of user
 const updateLocation = async (req, res) => {
   const userID = req.payload._id;
   const { neighbourhood, location } = req.body;

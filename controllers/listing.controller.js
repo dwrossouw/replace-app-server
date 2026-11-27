@@ -209,7 +209,6 @@ const getListings = async (req, res) => {
 };
 
 // // GET Retrieve individual listing details
-// router.get("/:id", async (req, res) => {});
 const getListingDetails = async (req, res) => {
   const { id } = req.params;
   if (!mongoose.isValidObjectId(id)) {
@@ -224,6 +223,7 @@ const getListingDetails = async (req, res) => {
 
   if (!listingDetails) {
     res.status(404).json({ message: "Listing not found." });
+    return;
   }
   res.status(200).json(listingDetails);
 };

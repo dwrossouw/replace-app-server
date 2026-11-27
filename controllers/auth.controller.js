@@ -2,8 +2,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User.model");
 
-// POST /api/auth/signup
-// Register a new user after validating the submitted account details.
+// POST Register a new user after validating the submitted account details.
 const signup = async (req, res) => {
   // Read the required signup values from the JSON request body.
   const { fullName, displayName, email, password, neighbourhood } = req.body;
@@ -63,8 +62,7 @@ const signup = async (req, res) => {
   res.status(201).json({ message: "User created." });
 };
 
-// POST /api/auth/login
-// Authenticate an existing user and issue a one-day JSON Web Token.
+// POST Authenticate an existing user and issue a one-day JSON Web Token.
 const login = async (req, res) => {
   // Retrieve the credentials supplied by the client.
   const { email, password } = req.body;
@@ -92,7 +90,7 @@ const login = async (req, res) => {
     foundUser.passwordHash,
   );
   if (!isPasswordCorrect) {
-    res.status(400).json({ message: "Password not correct" });
+    res.status(401).json({ message: "Password not correct" });
     return;
   }
 
@@ -110,8 +108,7 @@ const login = async (req, res) => {
   res.status(200).json({ authToken, payload });
 };
 
-// GET /api/auth/verify
-// Verify the Bearer token and retrieve the current user's information.
+// GET Verify the Bearer token and retrieve the current user's information.
 // Return a safe user object without exposing private information.
 const verifyUser = async (req, res) => {
   //Find the updated information in the db

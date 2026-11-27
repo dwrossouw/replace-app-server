@@ -11,7 +11,7 @@ router.patch("/:id", verifyToken,upload.single("image"), updateListing);
 router.delete("/:id", verifyToken, deleteListing)
 router.post("/:id/claims", verifyToken, createClaim);
 router.get("/:id/claims", verifyToken, getListingClaims);
-router.patch("/id/reopen", verifyToken, reopenListing);
+router.patch("/:id/reopen", verifyToken, reopenListing);
 router.get("/:id/collection", verifyToken, getCollectionDetails);
 router.patch("/:id/complete", verifyToken, completeListing)
 

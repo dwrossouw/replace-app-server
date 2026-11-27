@@ -125,7 +125,6 @@ const getListingClaims = async (req, res) => {
 };
 
 // PATCH Withdraw a claim
-
 const withdrawClaim = async (req, res) => {
   const claimID = req.params.id;
   const requesterID = req.payload._id;
