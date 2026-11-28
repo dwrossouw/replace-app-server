@@ -127,8 +127,10 @@ const verifyUser = async (req, res) => {
     role: foundUser.role,
     neighbourhood: foundUser.neighbourhood ?? null,
     hasLocation: hasLocation,
+    location: foundUser.location ?? null,
   };
 
+  res.set("Cache-Control", "no-store");
   res.status(200).json(userData);
 };
 
